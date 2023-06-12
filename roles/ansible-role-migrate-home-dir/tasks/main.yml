@@ -1,0 +1,72 @@
+---
+- name: List Block Devices
+  ansible.builtin.command:
+    cmd: "lsblk -f"
+  register: lsblk_result
+- name: List Block Devices
+  ansible.builtin.debug:
+    msg: "{{ lsblk_result }}"
+
+- name: Create a new primary 
+  community.general.parted:
+    device: "{{ parted_device }}"
+    number: 1
+    state: present
+    fs_type: "{{ parted_fs_type }}"
+
+- name: Create a filesystem on '"{{ parted_device }}1"
+  community.general.filesystem:
+    fstype: "{{ parted_fs_type }}"
+    dev: "{{ parted_device }}1"
+    state: present
+    
+- name: Create a temporary mount point for new disk
+  file:
+    path: /mnt/home
+    state: directory
+    mode: '0755'
+
+- name: Get Disk UUID
+  ansible.builtin.command: blkid -s UUID -o value "{{ parted_device }}1"
+  register: disk_uuid
+- name: Mount up device by UUID
+  ansible.posix.mount:
+    path: /mnt/home
+    src: UUID={{ disk_uuid.stdout_lines[0] }}
+    fstype: "{{ parted_fs_type }}"
+    opts: defaults
+    state: mounted
+
+# Copy the contents of the current home directory: 
+# Use the rsync command to copy the existing home directory to the new disk. 
+# The rsync command preserves file permissions and ownership. 
+- name: Move existing home folders to temporary home folder
+  command: rsync -aHAXx --delete --info=progress2 /home/ /mnt/home/
+
+- name: Move /home to /home.bak
+  command: mv /home /home.bak
+
+- name: Create a new home directory
+  file:
+    path: /home
+    state: directory
+    mode: '0755'
+
+- name: Get Disk UUID
+  ansible.builtin.command: blkid -s UUID -o value "{{ parted_device }}1"
+  register: disk_uuid
+- name: Unmount temporary /mnt/home
+  ansible.posix.mount:
+    path: /mnt/home
+    src: UUID={{ disk_uuid.stdout_lines[0] }}
+    fstype: "{{ parted_fs_type }}"
+    opts: defaults
+    state: absent_from_fstab
+
+- name: Mount /home by UUID
+  ansible.posix.mount:
+    path: /home
+    src: UUID={{ disk_uuid.stdout_lines[0] }}
+    fstype: "{{ parted_fs_type }}"
+    opts: defaults
+    state: mounted
